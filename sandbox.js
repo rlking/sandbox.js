@@ -9,6 +9,7 @@ const axios = require('axios');
 const request = require('request');
 const crypto=require('crypto');
 const mongoose = require('mongoose');
+const uuid = require('uuid');
 
 app.use(morgan('dev'));
 app.use(express.json());  
@@ -89,6 +90,9 @@ if (env.mode!='client') {
     console_log('📡HUB: Receiving a subscription request from '+subscriptionRequest['hub.callback'] + ' for event '+subscriptionRequest['hub.events']);
     // Check if it's a websub or websocket channel
     var checkResult={};
+    var isSubscription = false;
+    var isWebsocketChannelType = false;
+    
     if (typeof subscriptionRequest['hub.channel.type'] === 'undefined') {
       // websub - Check the supplied callback URL
       checkResult= await checkSubscriptionRequest(subscriptionRequest);
@@ -98,6 +102,7 @@ if (env.mode!='client') {
       subscriptionRequest['hub.channel.type']='websocket';
       checkResult.status =200;
       checkResult.data= subscriptionRequest['hub.secret'];
+      isWebsocketChannelType = true
     }
 
     console_log('📡HUB: Receiving response from the client. status code:' + checkResult.status + ', challenge: '+ checkResult.data); // Print the response status code if a response was received
@@ -111,11 +116,19 @@ if (env.mode!='client') {
         events: subscriptionRequest['hub.events'],
         secret: subscriptionRequest['hub.secret'],
         topic: subscriptionRequest['hub.topic'],
-        lease: subscriptionRequest['hub.lease'],
+        lease_seconds: subscriptionRequest['hub.lease_seconds'],
         session: subscriptionRequest['hub.topic'],
       };
       if (subscriptionRequest['hub.mode'] == 'subscribe') {
         subscriptions.push(subscription);
+        isSubscription = true
+        if (isWebsocketChannelType) {
+          subscription.endpoint = uuid.v4()
+        }
+        if ((subscription.lease_seconds === null) || (subscription.lease_seconds === undefined)) {
+          // set default lease_seconds if none set
+          subscription.lease_seconds = 750
+        }
         console_log('📡HUB: Subscription added for session:' + subscriptionRequest['hub.topic'] + ', event:' + subscriptionRequest['hub.events']); // Print the response status code if a response was received
       }
       else {
@@ -124,7 +137,13 @@ if (env.mode!='client') {
         });
         console_log('📡HUB: Subscription removed for session:' + subscriptionRequest['hub.topic'] + ', event:' + subscriptionRequest['hub.events']);
       }
-      res.send(202);
+      if (isSubscription && isWebsocketChannelType) {
+        const bodyForSuccessfullWebsocketSubscription = { "hub.channel.endpoint": `ws://${os.hostname}:${env.port}/bind/${subscription.endpoint}` }
+
+        res.status(202).send(bodyForSuccessfullWebsocketSubscription)
+      } else {
+        res.send(202);
+      }
       console_log('📡HUB: Sending subscription response statusCode: 202'); // Print the response status code if a response was received
   } else {
     res.send(500);
@@ -288,11 +307,14 @@ if(req.originalUrl.indexOf('launch')>0){
   subscriptions.forEach(function(subscription) {
     if(subscription.endpoint==req.params.endpoint ) {
       console_log('📡HUB: Binding websocket for: '+ req.params.endpoint);
-      subscription.websocket=publishWebsocket;   
-      var confirmation={};
-      var timestamp= new Date();
-      confirmation.timestamp= timestamp.toJSON();
-      confirmation.bound=req.params.endpoint;
+      subscription.websocket=publishWebsocket;
+      console_log("📡HUB: Sending subscription confirmation")
+      var confirmation={
+        'hub.mode': 'subscribe',
+        'hub.topic': subscription.topic,
+        'hub.events': subscription.events,
+        'hub.lease_seconds': subscription.lease_seconds
+      };
       publishWebsocket.send(JSON.stringify(confirmation));
     }
   });
@@ -314,8 +336,6 @@ function sendEvents(notification){
   subscriptions.forEach(function(subscription) {
     if(subscription.events.includes(notification.event['hub.event'])) {
       console_log('📡HUB:Found a subscription for '+subscription.events);
-      const hmac = crypto.createHmac('sha256',subscription.secret);
-      hmac.update(JSON.stringify(notification));
       if (subscription.channel=='websocket') {
         if (subscription.websocket.readyState==1)
         {
@@ -324,6 +344,8 @@ function sendEvents(notification){
         }
         else {console_log('📡HUB: This websocket is not open!'); }
       } else {  // not websocket- send json post
+        const hmac = crypto.createHmac('sha256',subscription.secret);
+        hmac.update(JSON.stringify(notification));
         request.post({
           url: subscription['callback'] ,
           method: 'POST',
