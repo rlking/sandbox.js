@@ -123,7 +123,9 @@ if (env.mode!='client') {
         subscriptions.push(subscription);
         isSubscription = true
         if (isWebsocketChannelType) {
-          subscription.endpoint = uuid.v4()
+			if ((subscription.endpoint === null) || (subscription.endpoint === undefined)) {
+				subscription.endpoint = uuid.v4()
+			}
         }
         if ((subscription.lease_seconds === null) || (subscription.lease_seconds === undefined)) {
           // set default lease_seconds if none set
