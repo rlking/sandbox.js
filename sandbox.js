@@ -140,7 +140,7 @@ if (env.mode!='client') {
         console_log('📡HUB: Subscription removed for session:' + subscriptionRequest['hub.topic'] + ', event:' + subscriptionRequest['hub.events']);
       }
       if (isSubscription && isWebsocketChannelType) {
-        const bodyForSuccessfullWebsocketSubscription = { "hub.channel.endpoint": `ws://${os.hostname}:${env.port}/bind/${subscription.endpoint}` }
+        const bodyForSuccessfullWebsocketSubscription = { "hub.channel.endpoint": `ws://localhost:${env.port}/bind/${subscription.endpoint}` }
 
         res.status(202).send(bodyForSuccessfullWebsocketSubscription)
       } else {
